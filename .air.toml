@@ -1,0 +1,5 @@
+[build]
+cmd = "go build -o ./tmp/defuse ./cmd/defuse"
+entrypoint = "./tmp/defuse"
+include_ext = ["go"]
+exclude_dir = ["web", "tmp", "node_modules", "assets/dist"]

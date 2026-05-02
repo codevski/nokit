@@ -1,0 +1,10 @@
+defuse
+defuse-*
+tmp/
+node_modules/
+web/dist/
+*.env
+.env.local
+config.local.yaml
+assets/dist/*
+!assets/dist/.gitkeep

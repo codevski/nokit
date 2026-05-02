@@ -1,0 +1,15 @@
+# Defuse configuration
+# Copy to config.yaml and edit. Secrets come from environment variables — see .env.example.
+
+listen: ":8080"
+
+servers:
+  - id: sparkup-cs2 # used in URLs and env var names; lowercase, hyphens ok
+    name: sparkup-cs2 # display name shown in the panel header
+    rcon_host: localhost:27015
+    log_port: 27500 # UDP port the panel listens on for this server's logs
+
+auth:
+  trust_proxy_auth: false # set true if Defuse sits behind Pangolin/Authentik/Authelia/etc.
+  trusted_proxy_ips: [] # required when trust_proxy_auth is true; e.g. ["10.0.0.0/8"]
+  session_max_age: 720h # 30 days
