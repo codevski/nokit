@@ -4,95 +4,84 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
-	"strings"
-	"time"
 
 	"github.com/codevski/defuse/internal/api"
+	"github.com/codevski/defuse/internal/auth"
 	"github.com/codevski/defuse/internal/rcon"
+	"github.com/codevski/defuse/internal/store"
 )
 
 type Server struct {
-	logger  *slog.Logger
-	dist    fs.FS
-	rconMgr *rcon.Manager
+	logger *slog.Logger
+	dist   fs.FS
+	store  *store.Store
+	rcon   *rcon.Manager
+	creds  auth.Credentials
 }
 
-func New(logger *slog.Logger, dist fs.FS, rconMgr *rcon.Manager) *Server {
+func New(logger *slog.Logger, dist fs.FS, st *store.Store, mgr *rcon.Manager, creds auth.Credentials) *Server {
 	return &Server{
-		logger:  logger,
-		dist:    dist,
-		rconMgr: rconMgr,
+		logger: logger,
+		dist:   dist,
+		store:  st,
+		rcon:   mgr,
+		creds:  creds,
 	}
 }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
-	mux.Handle("GET /api/ping", api.Wrap(s.logger, s.ping))
-	mux.Handle("POST /api/servers/{id}/rcon", api.Wrap(s.logger, s.execRCON))
+	mux.Handle("POST /api/login", api.Wrap(s.logger, api.LoginHandler(s.creds, s.store)))
+	mux.Handle("GET /api/health", api.Wrap(s.logger, s.health))
 
-	mux.Handle("/", http.FileServer(http.FS(s.dist)))
+	protected := http.NewServeMux()
+	protected.Handle("POST /api/logout", api.Wrap(s.logger, api.LogoutHandler(s.store)))
+	protected.Handle("GET /api/me", api.Wrap(s.logger, api.MeHandler()))
+	protected.Handle("GET /api/servers", api.Wrap(s.logger, api.ListServersHandler(s.store)))
+	protected.Handle("POST /api/servers", api.Wrap(s.logger, api.AddServerHandler(s.store, s.rcon)))
+	protected.Handle("DELETE /api/servers/{id}", api.Wrap(s.logger, api.DeleteServerHandler(s.store, s.rcon)))
+	protected.Handle("POST /api/servers/{id}/rcon", api.Wrap(s.logger, api.RCONHandler(s.rcon)))
 
-	return s.recoverPanics(s.logRequests(mux))
+	mux.Handle("/api/", auth.Middleware(s.store, protected))
+
+	mux.Handle("/", s.spaHandler())
+
+	return s.logRequests(s.recoverPanics(mux))
 }
 
-func (s *Server) ping(w http.ResponseWriter, r *http.Request) error {
-	return api.JSON(w, http.StatusOK, map[string]string{"message": "pong from defuse"})
+func (s *Server) health(w http.ResponseWriter, r *http.Request) error {
+	return api.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-type rconRequest struct {
-	Command string `json:"command"`
-}
-
-type rconResponse struct {
-	Output string `json:"output"`
-}
-
-func (s *Server) execRCON(w http.ResponseWriter, r *http.Request) error {
-	serverID := r.PathValue("id")
-	if serverID == "" {
-		return api.BadRequest("missing server id")
-	}
-
-	var req rconRequest
-	if err := api.Decode(r, &req); err != nil {
-		return err
-	}
-	req.Command = strings.TrimSpace(req.Command)
-	if req.Command == "" {
-		return api.BadRequest("command is required")
-	}
-
-	output, err := s.rconMgr.Execute(serverID, req.Command)
-	if err != nil {
-		return api.WrapHTTP(err, http.StatusBadGateway, "rcon execute failed")
-	}
-
-	return api.JSON(w, http.StatusOK, rconResponse{Output: output})
+func (s *Server) spaHandler() http.Handler {
+	fileServer := http.FileServer(http.FS(s.dist))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f, err := s.dist.Open(r.URL.Path[1:])
+		if err == nil {
+			f.Close()
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+		r2 := r.Clone(r.Context())
+		r2.URL.Path = "/"
+		fileServer.ServeHTTP(w, r2)
+	})
 }
 
 func (s *Server) logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
+		s.logger.Info("request", "method", r.Method, "path", r.URL.Path)
 		next.ServeHTTP(w, r)
-		s.logger.Info("request",
-			"method", r.Method,
-			"path", r.URL.Path,
-			"duration", time.Since(start),
-		)
 	})
 }
 
 func (s *Server) recoverPanics(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
-			if rec := recover(); rec != nil {
-				s.logger.Error("panic recovered",
-					"method", r.Method,
-					"path", r.URL.Path,
-					"panic", rec,
-				)
-				http.Error(w, "internal error", http.StatusInternalServerError)
+			if err := recover(); err != nil {
+				s.logger.Error("panic recovered", "error", err)
+				http.Error(w, "internal server error", http.StatusInternalServerError)
 			}
 		}()
 		next.ServeHTTP(w, r)

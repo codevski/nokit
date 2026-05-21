@@ -1,4 +1,5 @@
-defuse
+/bin/defuse
+/tmp/defuse
 defuse-*
 tmp/
 node_modules/
@@ -10,3 +11,4 @@ assets/dist/*
 !assets/dist/.gitkeep
 .env
 config.yml
+*.fish

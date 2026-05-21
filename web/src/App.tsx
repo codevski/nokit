@@ -1,119 +1,61 @@
-import { useState, useRef, useEffect, type FormEvent } from "react"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom"
+import { useAuth } from "@/hooks/useAuth"
+import { useServers } from "@/hooks/useServers"
+import { LoginPage } from "@/pages/login-page"
+import { ServerPage } from "@/pages/server-page"
+import { Header } from "./components/header"
+import { Layout } from "./components/layout"
 
-const SERVER_ID = "sparkup"
-
-type LogLine = {
-  id: number
-  kind: "cmd" | "output" | "error"
-  text: string
+function RequireAuth({ children }: { children: React.ReactNode }) {
+  const auth = useAuth()
+  if (auth.status === "loading") return null
+  if (auth.status === "unauthenticated") {
+    return <Navigate to="/login" replace />
+  }
+  return <>{children}</>
 }
 
-export default function App() {
-  const [lines, setLines] = useState<LogLine[]>([])
-  const [command, setCommand] = useState("")
-  const [busy, setBusy] = useState(false)
-  const nextId = useRef(0)
-  const outputRef = useRef<HTMLDivElement>(null)
-
-  const append = (kind: LogLine["kind"], text: string) => {
-    setLines((prev) => [...prev, { id: nextId.current++, kind, text }])
-  }
-
-  useEffect(() => {
-    outputRef.current?.scrollTo({ top: outputRef.current.scrollHeight })
-  }, [lines])
-
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault()
-    const cmd = command.trim()
-    if (!cmd || busy) return
-
-    append("cmd", cmd)
-    setCommand("")
-    setBusy(true)
-
-    try {
-      const res = await fetch(`/api/servers/${SERVER_ID}/rcon`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ command: cmd }),
-      })
-      const body = await res.json()
-      if (!res.ok) {
-        append("error", body.error || `request failed (${res.status})`)
-      } else {
-        append("output", body.output.trimEnd() || "(no output)")
-      }
-    } catch (err) {
-      append(
-        "error",
-        `network error: ${err instanceof Error ? err.message : "unknown"}`
-      )
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <div className="min-h-screen bg-background font-sans text-foreground">
-      <div className="mx-auto max-w-4xl space-y-4 p-6">
-        <header className="flex items-center justify-between">
-          <h1 className="text-lg font-medium">nokit</h1>
-          <span className="font-mono text-xs text-muted-foreground">
-            {SERVER_ID}
-          </span>
-        </header>
-
-        <div className="overflow-hidden rounded-lg border">
-          <div
-            ref={outputRef}
-            className="h-96 overflow-y-auto bg-muted/50 p-3 font-mono text-xs leading-relaxed"
-          >
-            {lines.length === 0 ? (
-              <div className="text-muted-foreground">
-                No commands run yet. Try <code>status</code> or{" "}
-                <code>mp_warmup_end</code>.
-              </div>
-            ) : (
-              lines.map((line) => (
-                <div key={line.id} className="whitespace-pre-wrap">
-                  {line.kind === "cmd" && (
-                    <span>
-                      <span className="text-muted-foreground">{"> "}</span>
-                      {line.text}
-                    </span>
-                  )}
-                  {line.kind === "output" && (
-                    <span className="text-foreground/80">{line.text}</span>
-                  )}
-                  {line.kind === "error" && (
-                    <span className="text-destructive">! {line.text}</span>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
-
-          <form
-            onSubmit={handleSubmit}
-            className="flex gap-2 border-t bg-background p-2"
-          >
-            <Input
-              value={command}
-              onChange={(e) => setCommand(e.target.value)}
-              placeholder="status, say, mp_restartgame..."
-              className="font-mono text-xs"
-              disabled={busy}
-              autoFocus
-            />
-            <Button type="submit" disabled={busy || !command.trim()} size="sm">
-              {busy ? "sending..." : "send"}
-            </Button>
-          </form>
+function RootRedirect() {
+  const state = useServers()
+  if (state.status === "loading") return null
+  if (state.status === "error")
+    return <div className="p-4 text-destructive">{state.message}</div>
+  if (state.servers.length === 0)
+    return (
+      <div className="flex flex-1 flex-col">
+        <Header servers={[]} currentId="" onRefresh={state.refresh} />
+        <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+          no servers configured - add one using the switcher above
         </div>
       </div>
-    </div>
+    )
+  return <Navigate to={`/servers/${state.servers[0].id}`} replace />
+}
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route element={<Layout />}>
+          <Route path="/login" element={<LoginPage />} />
+          <Route
+            path="/"
+            element={
+              <RequireAuth>
+                <RootRedirect />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/servers/:id"
+            element={
+              <RequireAuth>
+                <ServerPage />
+              </RequireAuth>
+            }
+          />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Route>
+      </Routes>
+    </BrowserRouter>
   )
 }

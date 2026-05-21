@@ -43,24 +43,24 @@ func New(logger *slog.Logger) *Manager {
 	}
 }
 
-func (m *Manager) Register(serverID, host, password string) {
+func (m *Manager) Connect(serverID, host, password string) error {
 	conn := &connection{
 		id:       serverID,
 		host:     host,
 		password: password,
 	}
-
 	m.mu.Lock()
 	m.connections[serverID] = conn
 	m.mu.Unlock()
-
 	if err := m.dial(conn); err != nil {
 		m.logger.Warn("rcon initial connect failed",
 			"server", serverID,
 			"host", host,
 			"error", err,
 		)
+		return err
 	}
+	return nil
 }
 
 func (m *Manager) dial(conn *connection) error {
@@ -135,4 +135,20 @@ func (m *Manager) Close() error {
 		conn.mu.Unlock()
 	}
 	return nil
+}
+
+func (m *Manager) Disconnect(serverID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	conn, ok := m.connections[serverID]
+	if !ok {
+		return
+	}
+	conn.mu.Lock()
+	if conn.client != nil {
+		_ = conn.client.Close()
+		conn.client = nil
+	}
+	conn.mu.Unlock()
+	delete(m.connections, serverID)
 }

@@ -1,4 +1,5 @@
 [build]
+env_file = ".env"
 cmd = "go build -o ./tmp/defuse ./cmd/defuse"
 entrypoint = "./tmp/defuse"
 include_ext = ["go"]
